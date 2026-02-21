@@ -5,9 +5,7 @@ def test_refund_amount_calculation():
     db.add(order)
     db.add(order_item)
     db.commit()
-
     # Process a refund for the order
     refund_result = process_refund(db, order.id)
-
     # Verify the refund amount calculation
     assert refund_result['refund_amount'] == 100.0

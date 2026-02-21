@@ -4,9 +4,7 @@ def process_refund(db: Session, order_id: int) -> dict:
         raise ValueError('Order not found')
     if order.status == 'refunded':
         raise ValueError('Order already refunded')
-    refund_amount = 0.0
-    for item in order.items:
-        refund_amount += item.price_at_purchase * item.quantity
+    refund_amount = order.total
     customer = order.customer
     customer.loyalty_points = max(0, customer.loyalty_points - int(refund_amount))
     order.status = 'refunded'
