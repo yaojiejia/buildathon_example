@@ -259,3 +259,45 @@ def test_refund_multiple_items_uses_order_total(db_session, setup_data):
 
     assert result["refund_amount"] == 120.00
     assert result["status"] == "refunded"
+
+
+def test_refund_amount_stored_on_order(db_session, setup_data):
+    """Test that refund amount is correctly stored on the order record."""
+    order = place_order(
+        db=db_session,
+        customer_id=1,
+        items=[{"product_id": 1, "quantity": 1}],
+        promo_code_str="DISCOUNT20"
+    )
+    assert order.total == 80.00
+    assert order.refund_amount is None
+
+    # Process refund
+    process_refund(db=db_session, order_id=order.id)
+
+    # Refresh and check stored refund amount
+    db_session.refresh(order)
+    assert order.refund_amount == 80.00
+    assert order.status == "refunded"
+
+
+def test_refund_with_quantity_greater_than_one(db_session, setup_data):
+    """Test refund calculation with quantity > 1."""
+    # Place an order for 3 items at $100 each = $300, with 20% off = $240
+    order = place_order(
+        db=db_session,
+        customer_id=1,
+        items=[{"product_id": 1, "quantity": 3}],
+        promo_code_str="DISCOUNT20"
+    )
+    assert order.subtotal == 300.00
+    assert order.total == 240.00
+
+    # Change price
+    product = db_session.query(Product).filter(Product.id == 1).first()
+    product.price = 50.00  # Price dropped significantly
+    db_session.commit()
+
+    # Refund should be $240 (what was paid), not $150 (new price * qty)
+    result = process_refund(db=db_session, order_id=order.id)
+    assert result["refund_amount"] == 240.00
