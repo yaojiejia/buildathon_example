@@ -77,6 +77,31 @@ def test_refund_uses_order_total_not_current_price(db_session, setup_data):
     assert result["status"] == "refunded"
 
 
+def test_refund_uses_order_total_when_price_decreased(db_session, setup_data):
+    """Test that refund uses order.total even when product price decreased."""
+    # Place an order at $100
+    order = place_order(
+        db=db_session,
+        customer_id=1,
+        items=[{"product_id": 1, "quantity": 1}],
+        promo_code_str=None
+    )
+    assert order.total == 100.00
+    original_total = order.total
+
+    # Change the product price after the order (price decreased)
+    product = db_session.query(Product).filter(Product.id == 1).first()
+    product.price = 50.00  # Price decreased
+    db_session.commit()
+
+    # Process refund - should refund the original $100, not $50
+    result = process_refund(db=db_session, order_id=order.id)
+
+    assert result["refund_amount"] == original_total
+    assert result["refund_amount"] == 100.00
+    assert result["status"] == "refunded"
+
+
 def test_refund_with_promo_code_discount(db_session, setup_data):
     """Test that refund reflects the discounted total when promo code was used."""
     # Place an order with 20% discount promo code
@@ -94,6 +119,32 @@ def test_refund_with_promo_code_discount(db_session, setup_data):
     # Process refund - should refund $80 (what customer actually paid)
     result = process_refund(db=db_session, order_id=order.id)
 
+    assert result["refund_amount"] == 80.00
+    assert result["status"] == "refunded"
+
+
+def test_refund_with_promo_and_price_change(db_session, setup_data):
+    """Test refund uses order.total when both promo was used and price changed."""
+    # Place an order with 20% discount promo code
+    # Product is $100, with 20% off = $80
+    order = place_order(
+        db=db_session,
+        customer_id=1,
+        items=[{"product_id": 1, "quantity": 1}],
+        promo_code_str="DISCOUNT20"
+    )
+    assert order.total == 80.00
+    original_total = order.total
+
+    # Change the product price after the order
+    product = db_session.query(Product).filter(Product.id == 1).first()
+    product.price = 200.00  # Price doubled
+    db_session.commit()
+
+    # Process refund - should refund $80 (original discounted total), not $200 or $160
+    result = process_refund(db=db_session, order_id=order.id)
+
+    assert result["refund_amount"] == original_total
     assert result["refund_amount"] == 80.00
     assert result["status"] == "refunded"
 
@@ -169,3 +220,42 @@ def test_refund_deducts_loyalty_points_correctly(db_session, setup_data):
     # Customer should have points deducted (80 points for $80 refund)
     db_session.refresh(customer)
     assert customer.loyalty_points == initial_points  # back to 0
+
+
+def test_refund_multiple_items_uses_order_total(db_session, setup_data):
+    """Test that refund with multiple items uses order.total correctly."""
+    # Add another product
+    product2 = Product(
+        id=2,
+        name="Second Product",
+        description="Another test product",
+        price=50.00,
+        stock=10
+    )
+    db_session.add(product2)
+    db_session.commit()
+
+    # Place an order with multiple items ($100 + $50 = $150, with 20% off = $120)
+    order = place_order(
+        db=db_session,
+        customer_id=1,
+        items=[
+            {"product_id": 1, "quantity": 1},
+            {"product_id": 2, "quantity": 1}
+        ],
+        promo_code_str="DISCOUNT20"
+    )
+    assert order.subtotal == 150.00
+    assert order.total == 120.00
+
+    # Change both product prices
+    product1 = db_session.query(Product).filter(Product.id == 1).first()
+    product1.price = 200.00
+    product2.price = 100.00
+    db_session.commit()
+
+    # Process refund - should refund $120, not $300 (new prices) or $240 (new prices with discount)
+    result = process_refund(db=db_session, order_id=order.id)
+
+    assert result["refund_amount"] == 120.00
+    assert result["status"] == "refunded"
